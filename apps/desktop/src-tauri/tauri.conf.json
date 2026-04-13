@@ -1,0 +1,17 @@
+{
+  "package": {
+    "productName": "astraos",
+    "version": "0.1.0"
+  },
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:3000",
+    "distDir": "../dist"
+  },
+  "tauri": {
+    "bundle": {
+      "identifier": "com.example.astraos"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+version: '3.8'
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant/storage:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+
+# Note: Ollama is typically run separately. If you have an Ollama image, add it here.
