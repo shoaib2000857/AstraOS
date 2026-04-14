@@ -45,10 +45,12 @@ async def upload_file(file: UploadFile = File(...), db_sess: Session = Depends(g
     db_sess.commit()
     db_sess.refresh(doc)
 
-    # Optionally, chunk and store DocumentChunk rows here (placeholder)
+    # If we extracted text, create chunks and index them into Qdrant
     if text:
-        chunk = db.models.DocumentChunk(document_id=doc.id, chunk_text=text[:4000], chunk_index=0)
-        db_sess.add(chunk)
-        db_sess.commit()
+        from ..services.ingest_service import embed_and_index_document
+        # create a placeholder chunk row; embed_and_index_document will create/manage chunks
+        res = embed_and_index_document(db_sess, doc)
+    else:
+        res = {"status": "uploaded_no_text"}
 
-    return {"status": "uploaded", "path": target_path, "document_id": doc.id}
+    return {"status": "uploaded", "path": target_path, "document_id": doc.id, "indexing": res}

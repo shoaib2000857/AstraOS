@@ -17,9 +17,75 @@ export default function Chat(){
     setInput('')
     setLoading(true)
     try{
-      const resp = await axios.post('/api/chat/', { prompt })
-      const reply = resp.data.reply
-      setMessages(prev=>[...prev, {role:'assistant', content: reply}])
+      // Use fetch streaming to consume server-sent event stream response
+      const resp = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      })
+
+      if (!resp.ok || !resp.body) {
+        throw new Error('Network response error')
+      }
+
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let done = false
+      let assembled = ''
+      // add placeholder assistant message to UI and update it progressively
+      setMessages(prev=>[...prev, {role:'assistant', content: ''}])
+      let msgIndex = messages.length // index where assistant message was pushed
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read()
+        done = readerDone
+        if (value) {
+          const chunk = decoder.decode(value)
+          // server sends SSE `data: {...}\n\n` chunks; try to extract JSON
+          const parts = chunk.split(/\n\n/)
+          for (const p of parts) {
+            const line = p.trim()
+            if (!line) continue
+            const m = line.replace(/^data:\s*/, '')
+            try {
+              const obj = JSON.parse(m)
+              if (obj.type === 'delta') {
+                assembled += obj.text
+                setMessages(prev=>{
+                  const copy = [...prev]
+                  // update last assistant message
+                  const idx = copy.findIndex(x => x.role === 'assistant' && x.content === '')
+                  if (idx >= 0) {
+                    copy[idx] = { ...copy[idx], content: assembled }
+                  } else {
+                    copy.push({ role: 'assistant', content: assembled })
+                  }
+                  return copy
+                })
+              } else if (obj.type === 'done') {
+                assembled = obj.text || assembled
+                setMessages(prev=>{
+                  const copy = [...prev]
+                  const idx = copy.findIndex(x => x.role === 'assistant' && (x.content === '' || x.content === assembled))
+                  if (idx >= 0) copy[idx] = { ...copy[idx], content: assembled }
+                  else copy.push({ role: 'assistant', content: assembled })
+                  return copy
+                })
+              }
+            } catch (e) {
+              // not json — append raw
+              assembled += m
+              setMessages(prev=>{
+                const copy = [...prev]
+                const idx = copy.findIndex(x => x.role === 'assistant' && x.content === '')
+                if (idx >= 0) copy[idx] = { ...copy[idx], content: assembled }
+                else copy.push({ role: 'assistant', content: assembled })
+                return copy
+              })
+            }
+          }
+        }
+      }
     }catch(e){
       setMessages(prev=>[...prev, {role:'assistant', content: 'Error: failed to reach backend'}])
     }finally{
