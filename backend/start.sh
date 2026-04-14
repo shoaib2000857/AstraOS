@@ -5,5 +5,5 @@ cd "$(dirname "$0")"
 if [ -f .venv/bin/activate ]; then
   source .venv/bin/activate
 fi
-python -m app.db init_db
+python -m app.db
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

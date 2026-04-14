@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.sqlite import JSON as SQLiteJSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -10,8 +10,13 @@ class Conversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(256), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
-    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    messages = relationship(
+        "Message",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="Message.timestamp",
+    )
 
 
 class Message(Base):
@@ -33,7 +38,7 @@ class Memory(Base):
     confidence = Column(Float, nullable=True)
     embedding_id = Column(String(128), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Document(Base):
@@ -46,7 +51,12 @@ class Document(Base):
     summary = Column(Text, nullable=True)
     tags = Column(String(512), nullable=True)
     imported_at = Column(DateTime, default=datetime.utcnow)
-    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+    chunks = relationship(
+        "DocumentChunk",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="DocumentChunk.chunk_index",
+    )
 
 
 class DocumentChunk(Base):
@@ -56,5 +66,5 @@ class DocumentChunk(Base):
     chunk_text = Column(Text, nullable=False)
     chunk_index = Column(Integer, nullable=False, default=0)
     vector_id = Column(String(128), nullable=True)
-    metadata = Column(SQLiteJSON, nullable=True)
+    chunk_metadata = Column("metadata", SQLiteJSON, nullable=True)
     document = relationship("Document", back_populates="chunks")

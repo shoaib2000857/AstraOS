@@ -1,16 +1,24 @@
-from fastapi.testclient import TestClient
+import asyncio
+
+import httpx
+
 from app.main import app
 
-client = TestClient(app)
+
+async def fetch_json(path: str):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get(path)
+    return response
 
 
 def test_ping():
-    r = client.get('/api/health/ping')
-    assert r.status_code == 200
-    assert r.json() == {"ping": "pong"}
+    response = asyncio.run(fetch_json("/api/health/ping"))
+    assert response.status_code == 200
+    assert response.json() == {"ping": "pong"}
 
 
 def test_ready():
-    r = client.get('/ready')
-    assert r.status_code == 200
-    assert r.json().get('status') == 'ready'
+    response = asyncio.run(fetch_json("/ready"))
+    assert response.status_code == 200
+    assert response.json().get("status") == "ready"

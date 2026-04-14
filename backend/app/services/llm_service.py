@@ -1,95 +1,182 @@
-import os
-import httpx
-from typing import Optional
 import asyncio
+import json
+import os
+from typing import Optional
+
+import httpx
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+DEFAULT_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3.1:8b")
+DEFAULT_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+
+
+def chunk_text(text: str, chunk_size: int = 140):
+    for index in range(0, len(text), chunk_size):
+        yield text[index:index + chunk_size]
+
 
 class OllamaClient:
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = base_url or OLLAMA_URL
-        self._client = httpx.Client(timeout=30)
+        self._client = httpx.Client(timeout=httpx.Timeout(30.0, connect=2.0))
 
-    def chat(self, model: str, prompt: str):
-        """Simple sync call to Ollama's chat endpoint (assumes OpenAI-compatible API).
-        This is a minimal placeholder — adapt to your Ollama deployment API."""
-        url = f"{self.base_url}/v1/engines/{model}/completions"
-        payload = {
-            "prompt": prompt,
-            "max_tokens": 512,
-            "temperature": 0.2,
-        }
-        resp = self._client.post(url, json=payload)
-        resp.raise_for_status()
-        return resp.json()
+    @staticmethod
+    def extract_text(payload):
+        if isinstance(payload, dict):
+            if "choices" in payload and payload["choices"]:
+                choice = payload["choices"][0]
+                message = choice.get("message") or {}
+                delta = choice.get("delta") or {}
+                return message.get("content") or delta.get("content") or choice.get("text")
+            if "message" in payload and isinstance(payload["message"], dict):
+                return payload["message"].get("content")
+            if "response" in payload:
+                return payload["response"]
+            if "text" in payload:
+                return payload["text"]
+        if isinstance(payload, str):
+            return payload
+        return None
 
-    def embed_text(self, model: str, texts: list[str]):
-        """Request embeddings for a list of texts.
-        Tries Ollama/OpenAI-compatible `/v1/embeddings` first; falls back to a zero-vector placeholder.
-        """
-        url = f"{self.base_url}/v1/embeddings"
-        payload = {"model": model, "input": texts}
+    def _chat_v1(self, model: str, messages: list[dict], temperature: float = 0.2, max_tokens: int = 512):
+        response = self._client.post(
+            f"{self.base_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def _chat_native(self, model: str, messages: list[dict], temperature: float = 0.2, max_tokens: int = 512):
+        response = self._client.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                },
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def chat(self, model: Optional[str], prompt: str):
+        return self.chat_messages(model=model, messages=[{"role": "user", "content": prompt}])
+
+    def chat_messages(
+        self,
+        model: Optional[str],
+        messages: list[dict],
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ):
+        selected_model = model or DEFAULT_CHAT_MODEL
         try:
-            resp = self._client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            # Expecting {'data': [{'embedding': [...]}, ...]} or OpenAI-style response
-            if isinstance(data, dict) and "data" in data:
-                embeddings = []
-                for item in data["data"]:
-                    emb = item.get("embedding") or item.get("vector")
-                    embeddings.append(emb)
-                return embeddings
-            return []
+            return self._chat_v1(selected_model, messages, temperature=temperature, max_tokens=max_tokens)
         except Exception:
-            # Return placeholder zero vectors sized 768 by default
-            return [[0.0] * 768 for _ in texts]
+            return self._chat_native(selected_model, messages, temperature=temperature, max_tokens=max_tokens)
 
-    async def chat_stream(self, model: str, prompt: str):
-        """Async generator that yields text chunks from the model.
+    def embed_text(self, model: Optional[str], texts: list[str]):
+        selected_model = model or DEFAULT_EMBEDDING_MODEL
+        try:
+            response = self._client.post(
+                f"{self.base_url}/v1/embeddings",
+                json={"model": selected_model, "input": texts},
+                timeout=httpx.Timeout(8.0, connect=2.0),
+            )
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict) and "data" in data:
+                return [(item.get("embedding") or item.get("vector")) for item in data["data"]]
+        except Exception:
+            pass
 
-        Attempts to connect to Ollama's standard completion endpoint with streaming.
-        If streaming isn't supported, falls back to returning the full completion
-        in a few artificial chunks to allow the frontend to render progressively.
-        """
-        url = f"{self.base_url}/v1/engines/{model}/completions"
-        payload = {"prompt": prompt, "max_tokens": 512, "temperature": 0.2}
+        for path in ("/api/embed", "/api/embeddings"):
+            try:
+                response = self._client.post(
+                    f"{self.base_url}{path}",
+                    json={"model": selected_model, "input": texts},
+                    timeout=httpx.Timeout(8.0, connect=2.0),
+                )
+                response.raise_for_status()
+                data = response.json()
+                if "embeddings" in data:
+                    return data["embeddings"]
+                if "embedding" in data:
+                    return [data["embedding"]]
+            except Exception:
+                continue
+        return []
 
+    async def chat_stream_messages(
+        self,
+        model: Optional[str],
+        messages: list[dict],
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ):
+        selected_model = model or DEFAULT_CHAT_MODEL
         async with httpx.AsyncClient(timeout=None) as client:
             try:
-                async with client.stream("POST", url, json=payload) as resp:
-                    resp.raise_for_status()
-                    async for chunk in resp.aiter_text(chunk_size=512):
-                        if not chunk:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/v1/chat/completions",
+                    json={
+                        "model": selected_model,
+                        "messages": messages,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                        "stream": True,
+                    },
+                ) as response:
+                    response.raise_for_status()
+                    buffer = ""
+                    async for raw in response.aiter_text():
+                        if not raw:
                             continue
-                        # Yield raw text chunks as they arrive
-                        yield chunk
+                        buffer += raw
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            line = line.strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if data == "[DONE]":
+                                return
+                            parsed = json.loads(data)
+                            text = self.extract_text(parsed)
+                            if text:
+                                yield text
                     return
             except Exception:
-                # Fallback: synchronous call and chunk the reply
                 try:
                     loop = asyncio.get_event_loop()
-                    resp = await loop.run_in_executor(None, self.chat, model, prompt)
-                    # extract text
-                    reply_text = None
-                    if isinstance(resp, dict):
-                        if "text" in resp:
-                            reply_text = resp["text"]
-                        elif "choices" in resp and len(resp["choices"]) > 0:
-                            reply_text = resp["choices"][0].get("text") or resp["choices"][0].get("message", {}).get("content")
-                    if reply_text is None:
-                        reply_text = str(resp)
-
-                    # yield in modest-sized chunks
-                    chunk_size = 120
-                    for i in range(0, len(reply_text), chunk_size):
-                        await asyncio.sleep(0)  # allow event loop to breathe
-                        yield reply_text[i:i+chunk_size]
+                    response = await loop.run_in_executor(
+                        None,
+                        self.chat_messages,
+                        selected_model,
+                        messages,
+                        temperature,
+                        max_tokens,
+                    )
+                    reply_text = self.extract_text(response) or str(response)
+                    for piece in chunk_text(reply_text):
+                        await asyncio.sleep(0)
+                        yield piece
                 except Exception:
-                    # final fallback: single short message
                     yield "[error retrieving stream]"
 
-# Example usage:
-# client = OllamaClient()
-# r = client.chat('local-instruct', 'Say hello')
-# print(r)
+    async def chat_stream(self, model: Optional[str], prompt: str):
+        async for piece in self.chat_stream_messages(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+        ):
+            yield piece

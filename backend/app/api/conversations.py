@@ -35,3 +35,13 @@ def get_conversation(conversation_id: int, db_sess: Session = Depends(get_db)):
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv
+
+
+@router.delete("/{conversation_id}", response_model=dict)
+def delete_conversation(conversation_id: int, db_sess: Session = Depends(get_db)):
+    conv = db_sess.query(db.models.Conversation).filter_by(id=conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    db_sess.delete(conv)
+    db_sess.commit()
+    return {"status": "deleted"}

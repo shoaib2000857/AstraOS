@@ -13,18 +13,24 @@ Goals: quick local chat, memory save/recall, file ingestion + semantic search.
 
 Quick start (backend):
 
-1. Create a Python venv and install deps:
+Recommended Python: 3.11+ (the backend now works cleanly on Python 3.13 as well). If you use Conda it's easiest to create an isolated environment.
+
+Option A — Conda (recommended):
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r backend/requirements.txt
+conda create -n astraos-py311 python=3.11 -y
+conda activate astraos-py311
+cd backend
+python -m pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
 ```
 
-2. Run backend:
+
+Run backend:
 
 ```bash
-uvicorn backend.app.main:app --reload
+cd backend
+./start.sh
 ```
 
 See `backend/.env.example` to configure `OLLAMA_URL` and `QDRANT_URL`.
@@ -64,8 +70,8 @@ pytest -q
 
 What's included:
 
-- FastAPI backend: health, chat (sync + streaming), conversation and memory APIs, ingestion and Qdrant indexing hooks.
-- React + Vite frontend with a minimal chat UI that streams responses.
+- FastAPI backend: health, chat (sync + streaming), conversation/memory/document/task APIs, file ingestion, lexical fallback retrieval, and Qdrant hooks.
+- React + Vite frontend with conversation history, editable memories, document upload/inspection, and grounded Q&A screens.
 - Docker compose for Qdrant in `/docker`.
 
 Next recommended steps: configure Ollama locally (set `OLLAMA_URL`), iterate on prompts and memory retention policies, and add UI pages for memory/document inspection.

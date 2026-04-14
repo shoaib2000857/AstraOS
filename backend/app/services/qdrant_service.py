@@ -1,17 +1,28 @@
 import os
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qmodels
+
+try:
+    from qdrant_client import QdrantClient
+    from qdrant_client.http import models as qmodels
+except ImportError:  # pragma: no cover - optional dependency
+    QdrantClient = None
+    qmodels = None
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "2"))
 
-_client: QdrantClient | None = None
+_client = None
+
+
+def is_available() -> bool:
+    return QdrantClient is not None
 
 
 def get_client():
     global _client
+    if not is_available():
+        raise RuntimeError("qdrant-client is not installed")
     if _client is None:
-        # QdrantClient accepts host and prefer_grpc options; using http endpoint here
-        _client = QdrantClient(url=QDRANT_URL)
+        _client = QdrantClient(url=QDRANT_URL, timeout=QDRANT_TIMEOUT_SECONDS)
     return _client
 
 

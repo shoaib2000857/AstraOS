@@ -1,7 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
+
 from .. import db
-import os
+from ..db import PROJECT_ROOT
+from ..services.ingest_service import checksum_bytes, embed_and_index_document
 
 router = APIRouter(prefix="/api/ingest")
 
@@ -16,41 +21,47 @@ def get_db():
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...), db_sess: Session = Depends(get_db)):
-    # Save uploaded file to storage/uploads
-    uploads_dir = os.path.join(os.getcwd(), "storage", "uploads")
-    os.makedirs(uploads_dir, exist_ok=True)
-    target_path = os.path.join(uploads_dir, file.filename)
-    with open(target_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    uploads_dir = PROJECT_ROOT / "storage" / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
 
-    # Try to extract text from simple types; PDF support via PyMuPDF if available
+    original_name = Path(file.filename or "upload").name
+    stored_name = f"{uuid4().hex}_{original_name}"
+    target_path = uploads_dir / stored_name
+    content = await file.read()
+    target_path.write_bytes(content)
+
     text = None
-    if file.content_type == "text/plain" or file.filename.endswith(".txt"):
+    suffix = target_path.suffix.lower()
+    if file.content_type == "text/plain" or suffix in {".txt", ".md", ".py", ".ts", ".tsx", ".js", ".json", ".csv"}:
         text = content.decode("utf-8", errors="ignore")
-    elif file.filename.endswith(".pdf"):
+    elif suffix == ".pdf":
         try:
             import fitz
+
             doc = fitz.open(stream=content, filetype="pdf")
-            pages = []
-            for page in doc:
-                pages.append(page.get_text())
-            text = "\n\n".join(pages)
+            text = "\n\n".join(page.get_text() for page in doc)
         except Exception:
             text = None
 
-    # Create document record
-    doc = db.models.Document(title=file.filename, file_path=target_path, file_type=file.content_type)
-    db_sess.add(doc)
+    document = db.models.Document(
+        title=original_name,
+        file_path=str(target_path),
+        file_type=file.content_type or suffix.lstrip("."),
+        checksum=checksum_bytes(content),
+    )
+    db_sess.add(document)
     db_sess.commit()
-    db_sess.refresh(doc)
+    db_sess.refresh(document)
 
-    # If we extracted text, create chunks and index them into Qdrant
-    if text:
-        from ..services.ingest_service import embed_and_index_document
-        # create a placeholder chunk row; embed_and_index_document will create/manage chunks
-        res = embed_and_index_document(db_sess, doc)
+    if text is not None:
+        indexing = embed_and_index_document(db_sess, db.models, document, source_text=text)
     else:
-        res = {"status": "uploaded_no_text"}
+        indexing = embed_and_index_document(db_sess, db.models, document)
 
-    return {"status": "uploaded", "path": target_path, "document_id": doc.id, "indexing": res}
+    return {
+        "status": "uploaded",
+        "path": str(target_path),
+        "document_id": document.id,
+        "summary": document.summary,
+        "indexing": indexing,
+    }

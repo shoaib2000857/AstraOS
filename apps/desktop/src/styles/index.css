@@ -2,5 +2,31 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root { height: 100%; }
-body { font-family: Inter, ui-sans-serif, system-ui; }
+:root {
+  color-scheme: light;
+  --ink: #29211b;
+  --paper: #fffdf8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: Aptos, "Segoe UI", "Helvetica Neue", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(251, 191, 36, 0.18), transparent 30%),
+    radial-gradient(circle at top right, rgba(251, 146, 60, 0.14), transparent 28%),
+    linear-gradient(180deg, #f8f2e7 0%, #f4efe7 48%, #f9f7f2 100%);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
